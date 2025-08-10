@@ -57,3 +57,6 @@ temp/
 # Claude
 .claude
 CLAUDE.md
+
+# binaries
+server

@@ -1,12 +1,12 @@
 # Go API Template
 
-A modern, production-ready Go API service template featuring multiple database engine support, caching, event management, and comprehensive tooling.
+A modern, production-ready Go API service template featuring multiple database engine support, caching, event stream management with webhook delivery, and comprehensive tooling.
 
 ## Features
 
 - **Multi-Database Support**: PostgreSQL, MySQL, SQLite with automatic configuration
 - **Caching Layer**: Redis and Memcache support with configurable TTL
-- **Event System**: Internal workflow/event manager for decoupled architecture  
+- **Event Streaming**: Event stream management with external webhook delivery  
 - **API Documentation**: Automatic OpenAPI/Swagger documentation generation
 - **Middleware Stack**: Logging, recovery, CORS, rate limiting, request ID tracking
 - **Configuration Management**: Environment-based configuration with validation
@@ -122,15 +122,23 @@ make docker-run
 ### Health Check
 - `GET /api/v1/health` - Service health status
 
-### User Management
-- `POST /api/v1/users` - Create user
-- `GET /api/v1/users` - List users
-- `GET /api/v1/users/:id` - Get user by ID
-- `PUT /api/v1/users/:id` - Update user
-- `DELETE /api/v1/users/:id` - Delete user
+### Event Streaming
+- `POST /api/v1/events` - Create event in a stream
+- `GET /api/v1/events` - Get events with pagination
+- `GET /api/v1/events/types/:type` - Get events by type
+- `GET /api/v1/events/streams` - Get available event streams
+- `GET /api/v1/events/streams/:stream_id` - Get events from specific stream
 
-### Authentication
-- `POST /api/v1/auth/login` - User login
+### Webhook Management
+- `POST /api/v1/webhooks` - Create webhook endpoint
+- `GET /api/v1/webhooks` - List webhook endpoints
+- `GET /api/v1/webhooks/:id` - Get webhook by ID
+- `PUT /api/v1/webhooks/:id` - Update webhook
+- `DELETE /api/v1/webhooks/:id` - Delete webhook
+- `GET /api/v1/webhooks/:id/deliveries` - Get webhook delivery history
+
+### Monitoring
+- `GET /api/v1/monitoring/stats` - System statistics
 
 ### Documentation
 - `GET /docs/` - Swagger UI documentation
@@ -147,7 +155,7 @@ make docker-run
 │   ├── cache/           # Cache layer
 │   ├── handlers/        # HTTP handlers
 │   ├── middleware/      # HTTP middleware
-│   └── events/          # Event/workflow manager
+│   └── events/          # Event stream manager
 ├── pkg/
 │   ├── models/          # Data models
 │   └── utils/           # Utility functions
@@ -197,26 +205,85 @@ CACHE_HOST=localhost
 CACHE_PORT=11211
 ```
 
-## Event System
+## Event Streaming System
 
-The template includes a built-in event management system for decoupled architecture:
+The template features a comprehensive event streaming system designed for external consumption and real-time data distribution:
 
-- **Event Publisher**: Publish events throughout the application
-- **Event Subscribers**: Register handlers for specific event types
-- **Workflow Manager**: Define and execute multi-step workflows
-- **Async Processing**: Support for asynchronous event handling
+### Core Concepts
 
-Example usage:
+- **Event Streams**: Groups of related events identified by `stream_id` for logical organization
+- **Sequence Numbers**: Events within each stream are ordered sequentially for guaranteed ordering
+- **External Consumption**: Webhook-based delivery system for external applications
+- **Event Types**: Categorized events with type-specific processing and filtering
+
+### Event Structure
+
+Events are structured with the following key properties:
+- `id`: Unique event identifier
+- `type`: Event category (e.g., "user.created", "payment.processed")
+- `stream_id`: Logical grouping for related events
+- `source`: Event origin/producer
+- `data`: Event payload as JSON
+- `timestamp`: Event creation time
+- `sequence_number`: Ordering within stream
+
+### Webhook Delivery
+
+Configure webhooks to receive events automatically:
+
+```bash
+# Create a webhook endpoint
+curl -X POST http://localhost:8080/api/v1/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Service Webhook",
+    "url": "https://myservice.com/webhooks/events",
+    "secret": "webhook-secret-key",
+    "event_types": ["user.created", "payment.processed"],
+    "max_retries": 3,
+    "timeout_seconds": 30
+  }'
+```
+
+### Publishing Events
+
+```bash
+# Create an event
+curl -X POST http://localhost:8080/api/v1/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "user.created",
+    "stream_id": "user-123",
+    "source": "user-service",
+    "data": {
+      "user_id": 123,
+      "email": "user@example.com"
+    }
+  }'
+```
+
+### Event Querying
+
+```bash
+# Get events from specific stream
+curl "http://localhost:8080/api/v1/events/streams/user-123?limit=10"
+
+# Get events by type
+curl "http://localhost:8080/api/v1/events/types/user.created?limit=50"
+
+# Get all event streams
+curl "http://localhost:8080/api/v1/events/streams"
+```
+
+### Internal Event Handlers
+
+Event handlers can be registered internally for processing events within the application. These are separate from the public API and are designed for internal business logic:
+
 ```go
-// Publish an event
-eventManager.Publish(ctx, events.Event{
-    Type: "user.created",
-    Data: map[string]interface{}{"user_id": 123},
-})
-
-// Subscribe to events
-eventManager.Subscribe("user.created", func(ctx context.Context, event Event) error {
-    // Handle user creation
+// Register internal event handler (not exposed via API)
+eventManager.RegisterHandler("user.created", func(ctx context.Context, event models.Event) error {
+    // Process user creation event internally
+    log.Printf("User created: %s", event.Data)
     return nil
 })
 ```

@@ -38,7 +38,8 @@ Migrations are configured in `internal/database/database.go`:
 func (db *DB) AutoMigrate() error {
     return db.DB.AutoMigrate(
         &models.Event{},
-        &models.WorkflowExecution{},
+        &models.WebhookEndpoint{},
+        &models.WebhookDelivery{},
         // Add new models here
     )
 }
@@ -72,7 +73,8 @@ Update the migration function:
 func (db *DB) AutoMigrate() error {
     return db.DB.AutoMigrate(
         &models.Event{},
-        &models.WorkflowExecution{},
+        &models.WebhookEndpoint{},
+        &models.WebhookDelivery{},
         &models.User{}, // Add your new model
     )
 }
@@ -360,18 +362,18 @@ The template includes example database methods in `internal/database/database.go
 
 ### Using Preloading (Relationships)
 ```go
-// Get workflow execution with related events
-execution, err := h.db.GetWorkflowExecutionWithEvents("execution-123")
+// Get webhook deliveries with related webhook and event data
+deliveries, err := h.db.GetWebhookDeliveriesWithRelations("webhook-123", 10)
 if err != nil {
     // Handle error
 }
-// execution.Events will contain all related events
+// deliveries will contain related webhook and event data
 ```
 
 ### Pagination with Filtering
 ```go
-// Get paginated events with optional filtering
-events, total, err := h.db.GetEventsByTypeWithPagination("workflow.started", 0, 10)
+// Get paginated events with optional filtering by type
+events, total, err := h.db.GetEventsByTypeWithPagination("user.created", 0, 10)
 if err != nil {
     // Handle error
 }
@@ -380,43 +382,51 @@ log.Printf("Found %d events, showing first 10", total)
 
 ### Transaction Usage
 ```go
-// Create event and update execution atomically
+// Create event with proper sequence numbering (atomic)
 event := &models.Event{
     ID: "event-123",
-    Type: "workflow.completed",
-    // ... other fields
+    Type: "user.created",
+    StreamID: "user-stream-456",
+    Source: "user-service",
+    Data: models.JSON{"user_id": 789},
 }
 
-execution := &models.WorkflowExecution{
-    ID: "execution-123",
-    Status: "completed",
-    // ... other fields
-}
-
-err := h.db.CreateEventWithTransaction(event, execution)
+err := h.db.CreateEventWithSequence(event)
 if err != nil {
-    // Both operations will be rolled back
+    // Transaction will be rolled back
 }
 ```
 
 ### Aggregation Queries
 ```go
-// Get execution statistics by status
-stats, err := h.db.GetExecutionStatsByStatus()
+// Get event statistics by type
+stats, err := h.db.GetEventStatsByType()
 if err != nil {
     // Handle error
 }
-// stats map contains: {"completed": 150, "failed": 25, "running": 10}
+// stats map contains: {"user.created": 150, "payment.processed": 25, "order.placed": 10}
 ```
 
 ## Current Schema
 
 The template includes these models with relationships:
 
-### Event ↔ WorkflowExecution (One-to-Many)
-- **WorkflowExecution** has many **Events** (optional relationship)
-- Events can be linked to workflow executions for traceability
-- Uses foreign key with CASCADE UPDATE and SET NULL on DELETE
+### Event Streaming Models
+
+#### Event
+- **Core event model** with stream grouping and sequence numbering
+- Fields: `ID`, `Type`, `StreamID`, `Source`, `Data`, `Timestamp`, `SequenceNumber`
+- Events are grouped by `StreamID` and ordered by `SequenceNumber`
+
+#### WebhookEndpoint ↔ WebhookDelivery (One-to-Many)
+- **WebhookEndpoint** has many **WebhookDelivery** records
+- **WebhookDelivery** belongs to **WebhookEndpoint** and **Event**
+- Uses foreign keys with CASCADE constraints for data integrity
+
+#### WebhookDelivery ↔ Event (Many-to-One)
+- **WebhookDelivery** tracks each delivery attempt to a webhook
+- Links to both **WebhookEndpoint** and **Event** for complete audit trail
+- Stores delivery status, attempts, responses, and retry information
 
 ### JSON Support
 - Custom `JSON` type works across all supported databases

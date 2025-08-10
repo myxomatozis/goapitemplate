@@ -8,10 +8,12 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `json:"server"`
-	Database DatabaseConfig `json:"database"`
-	Cache    CacheConfig    `json:"cache"`
-	Logging  LoggingConfig  `json:"logging"`
+	Server    ServerConfig    `json:"server"`
+	Database  DatabaseConfig  `json:"database"`
+	Cache     CacheConfig     `json:"cache"`
+	Logging   LoggingConfig   `json:"logging"`
+	CORS      CORSConfig      `json:"cors"`
+	RateLimit RateLimitConfig `json:"rate_limit"`
 }
 
 type ServerConfig struct {
@@ -48,6 +50,20 @@ type LoggingConfig struct {
 	Format string `json:"format"`
 }
 
+type CORSConfig struct {
+	AllowedOrigins   []string `json:"allowed_origins"`
+	AllowedMethods   []string `json:"allowed_methods"`
+	AllowedHeaders   []string `json:"allowed_headers"`
+	AllowCredentials bool     `json:"allow_credentials"`
+	MaxAge           int      `json:"max_age"`
+}
+
+type RateLimitConfig struct {
+	Enabled       bool `json:"enabled"`
+	MaxRequests   int  `json:"max_requests"`
+	WindowMinutes int  `json:"window_minutes"`
+}
+
 func Load() (*Config, error) {
 	config := &Config{
 		Server: ServerConfig{
@@ -79,6 +95,18 @@ func Load() (*Config, error) {
 		Logging: LoggingConfig{
 			Level:  getEnvString("LOG_LEVEL", "info"),
 			Format: getEnvString("LOG_FORMAT", "json"),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins:   strings.Split(getEnvString("CORS_ALLOWED_ORIGINS", "*"), ","),
+			AllowedMethods:   strings.Split(getEnvString("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS"), ","),
+			AllowedHeaders:   strings.Split(getEnvString("CORS_ALLOWED_HEADERS", "Content-Type,Authorization,X-Requested-With"), ","),
+			AllowCredentials: getEnvBool("CORS_ALLOW_CREDENTIALS", true),
+			MaxAge:           getEnvInt("CORS_MAX_AGE", 86400),
+		},
+		RateLimit: RateLimitConfig{
+			Enabled:       getEnvBool("RATE_LIMIT_ENABLED", false),
+			MaxRequests:   getEnvInt("RATE_LIMIT_MAX_REQUESTS", 100),
+			WindowMinutes: getEnvInt("RATE_LIMIT_WINDOW_MINUTES", 1),
 		},
 	}
 
@@ -161,7 +189,7 @@ func getDefaultCachePort(cacheType string) int {
 
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
-		if strings.ToLower(s) == strings.ToLower(item) {
+		if strings.EqualFold(s, item) {
 			return true
 		}
 	}

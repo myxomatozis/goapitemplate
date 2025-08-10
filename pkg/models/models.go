@@ -8,47 +8,52 @@ import (
 )
 
 
-// Event represents an event in the system
+// Event represents an event in the system with stream grouping
 type Event struct {
-	ID                    string    `gorm:"primaryKey" json:"id"`
-	Type                  string    `gorm:"not null;index" json:"type"`
-	Source                string    `gorm:"not null" json:"source"`
-	Data                  JSON      `gorm:"type:json" json:"data"`
-	Timestamp             time.Time `gorm:"not null;index" json:"timestamp"`
-	CreatedAt             time.Time `json:"created_at"`
+	ID            string    `gorm:"primaryKey" json:"id"`
+	Type          string    `gorm:"not null;index" json:"type"`
+	StreamID      string    `gorm:"not null;index" json:"stream_id"` // For grouping related events
+	Source        string    `gorm:"not null" json:"source"`
+	Data          JSON      `gorm:"type:json" json:"data"`
+	Timestamp     time.Time `gorm:"not null;index" json:"timestamp"`
+	CreatedAt     time.Time `json:"created_at"`
 	
-	// Foreign key for workflow execution relationship (optional)
-	WorkflowExecutionID   *string           `gorm:"index" json:"workflow_execution_id,omitempty"`
-	WorkflowExecution     *WorkflowExecution `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"workflow_execution,omitempty"`
+	// Event ordering within stream
+	SequenceNumber int64 `gorm:"not null;index:idx_stream_sequence" json:"sequence_number"`
 }
 
-// StepExecution represents a single step execution in a workflow
-type StepExecution struct {
-	StepName     string     `json:"step_name"`
-	Status       string     `json:"status"` // pending, running, completed, failed, timeout, skipped
-	StartTime    time.Time  `json:"start_time"`
-	EndTime      *time.Time `json:"end_time,omitempty"`
-	Attempts     int        `json:"attempts"`
+
+// WebhookEndpoint represents an external webhook for event consumption
+type WebhookEndpoint struct {
+	ID             string    `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"not null" json:"name"`
+	URL            string    `gorm:"not null" json:"url"`
+	Secret         string    `gorm:"not null" json:"secret"` // For signature verification
+	EventTypes     []string  `gorm:"type:json;serializer:json" json:"event_types"` // Which events to send
+	Enabled        bool      `gorm:"not null;default:true" json:"enabled"`
+	MaxRetries     int       `gorm:"not null;default:3" json:"max_retries"`
+	TimeoutSeconds int       `gorm:"not null;default:30" json:"timeout_seconds"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// WebhookDelivery represents a webhook delivery attempt
+type WebhookDelivery struct {
+	ID           string     `gorm:"primaryKey" json:"id"`
+	WebhookID    string     `gorm:"not null;index" json:"webhook_id"`
+	EventID      string     `gorm:"not null;index" json:"event_id"`
+	Status       string     `gorm:"not null" json:"status"` // pending, success, failed
+	AttemptCount int        `gorm:"not null;default:0" json:"attempt_count"`
+	LastAttempt  *time.Time `json:"last_attempt,omitempty"`
+	NextRetry    *time.Time `json:"next_retry,omitempty"`
+	Response     string     `json:"response,omitempty"`
 	ErrorMessage string     `json:"error_message,omitempty"`
-	Output       JSON       `json:"output,omitempty"`
-}
-
-// WorkflowExecution represents a workflow execution
-type WorkflowExecution struct {
-	ID           string          `gorm:"primaryKey" json:"id"`
-	WorkflowID   string          `gorm:"not null;index" json:"workflow_id"`
-	Status       string          `gorm:"not null" json:"status"` // pending, running, completed, failed, timeout
-	CurrentStep  string          `json:"current_step"`
-	Variables    JSON            `gorm:"type:json" json:"variables"`
-	StepHistory  []StepExecution `gorm:"type:json;serializer:json" json:"step_history"`
-	StartedAt    time.Time       `gorm:"not null" json:"started_at"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	ErrorMessage string          `json:"error_message,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 	
-	// Relationship: WorkflowExecution has many Events
-	Events []Event `gorm:"foreignKey:WorkflowExecutionID" json:"events,omitempty"`
+	// Relationships
+	Webhook *WebhookEndpoint `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"webhook,omitempty"`
+	Event   *Event           `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"event,omitempty"`
 }
 
 // JSON is a custom type for handling JSON data in GORM
@@ -96,34 +101,38 @@ type APIResponse struct {
 	Message string      `json:"message,omitempty"`
 }
 
-// Workflow DTOs
-type WorkflowStepConfig struct {
-	MaxRetries      int                    `json:"max_retries,omitempty"`
-	TimeoutMs       int                    `json:"timeout_ms,omitempty"`
-	RetryDelayMs    int                    `json:"retry_delay_ms,omitempty"`
-	ContinueOnError bool                   `json:"continue_on_error,omitempty"`
-	Condition       string                 `json:"condition,omitempty"`
-	Parallel        bool                   `json:"parallel,omitempty"`
-	Parameters      map[string]interface{} `json:"parameters,omitempty"`
+// Event System DTOs
+type CreateEventRequest struct {
+	Type     string                 `json:"type" binding:"required"`
+	StreamID string                 `json:"stream_id" binding:"required"`
+	Source   string                 `json:"source" binding:"required"`
+	Data     map[string]interface{} `json:"data"`
 }
 
-type WorkflowStep struct {
-	Name        string             `json:"name"`
-	Type        string             `json:"type"`
-	Config      WorkflowStepConfig `json:"config"`
-	OnSuccess   string             `json:"on_success,omitempty"`
-	OnError     string             `json:"on_error,omitempty"`
-	OnTimeout   string             `json:"on_timeout,omitempty"`
-	Description string             `json:"description,omitempty"`
+type CreateWebhookRequest struct {
+	Name           string   `json:"name" binding:"required"`
+	URL            string   `json:"url" binding:"required,url"`
+	Secret         string   `json:"secret" binding:"required"`
+	EventTypes     []string `json:"event_types" binding:"required"`
+	MaxRetries     int      `json:"max_retries"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
 }
 
-type Workflow struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	Steps       map[string]WorkflowStep `json:"steps"`
-	StartStep   string                  `json:"start_step"`
-	Variables   map[string]interface{}  `json:"variables"`
+type UpdateWebhookRequest struct {
+	Name           string   `json:"name,omitempty"`
+	URL            string   `json:"url,omitempty" binding:"omitempty,url"`
+	Secret         string   `json:"secret,omitempty"`
+	EventTypes     []string `json:"event_types,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	MaxRetries     int      `json:"max_retries,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}
+
+
+type EventStreamResponse struct {
+	StreamID string  `json:"stream_id"`
+	Events   []Event `json:"events"`
+	Count    int64   `json:"count"`
 }
 
 // TableName methods for GORM
@@ -131,6 +140,11 @@ func (Event) TableName() string {
 	return "events"
 }
 
-func (WorkflowExecution) TableName() string {
-	return "workflow_executions"
+
+func (WebhookEndpoint) TableName() string {
+	return "webhook_endpoints"
+}
+
+func (WebhookDelivery) TableName() string {
+	return "webhook_deliveries"
 }

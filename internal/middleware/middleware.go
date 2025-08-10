@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
+
+	"goapitemplate/internal/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -33,15 +37,43 @@ func Recovery() gin.HandlerFunc {
 	})
 }
 
-func CORS() gin.HandlerFunc {
+func CORS(corsConfig config.CORSConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		origin := c.Request.Header.Get("Origin")
+		
+		// Check if origin is allowed
+		if len(corsConfig.AllowedOrigins) > 0 && !contains(corsConfig.AllowedOrigins, "*") {
+			if !contains(corsConfig.AllowedOrigins, origin) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+		}
+
+		// Set CORS headers
+		if contains(corsConfig.AllowedOrigins, "*") {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else if origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
+
+		if corsConfig.AllowCredentials {
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+
+		if len(corsConfig.AllowedHeaders) > 0 {
+			c.Header("Access-Control-Allow-Headers", strings.Join(corsConfig.AllowedHeaders, ", "))
+		}
+
+		if len(corsConfig.AllowedMethods) > 0 {
+			c.Header("Access-Control-Allow-Methods", strings.Join(corsConfig.AllowedMethods, ", "))
+		}
+
+		if corsConfig.MaxAge > 0 {
+			c.Header("Access-Control-Max-Age", fmt.Sprintf("%d", corsConfig.MaxAge))
+		}
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
@@ -107,4 +139,13 @@ func randomString(length int) string {
 		result[i] = charset[i%len(charset)]
 	}
 	return string(result)
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if strings.EqualFold(s, item) {
+			return true
+		}
+	}
+	return false
 }

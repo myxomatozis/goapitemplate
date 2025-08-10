@@ -40,6 +40,23 @@ services:
       - app-network
     restart: unless-stopped
 
+  mysql:
+    image: mysql:8.0
+    profiles:
+      - mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass
+      - MYSQL_DATABASE=goapitemplate
+      - MYSQL_USER=mysql
+      - MYSQL_PASSWORD=mysql
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app-network
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     ports:
@@ -50,8 +67,19 @@ services:
       - app-network
     restart: unless-stopped
 
+  adminer:
+    image: adminer:5.3.0
+    profiles:
+      - admin
+    ports:
+      - "8081:8080"
+    networks:
+      - app-network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  mysql_data:
   redis_data:
 
 networks:

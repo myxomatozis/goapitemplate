@@ -72,7 +72,8 @@ func (db *DB) GetDBType() string {
 func (db *DB) AutoMigrate() error {
 	return db.DB.AutoMigrate(
 		&models.Event{},
-		&models.WorkflowExecution{},
+		&models.WebhookEndpoint{},
+		&models.WebhookDelivery{},
 	)
 }
 
@@ -84,19 +85,29 @@ func (db *DB) Close() error {
 	return sqlDB.Close()
 }
 
-// Example query methods demonstrating GORM patterns
+// Example query methods demonstrating GORM patterns for event streams
 
-// GetWorkflowExecutionWithEvents demonstrates preloading relationships
-func (db *DB) GetWorkflowExecutionWithEvents(executionID string) (*models.WorkflowExecution, error) {
-	var execution models.WorkflowExecution
-	err := db.DB.Preload("Events").Where("id = ?", executionID).First(&execution).Error
-	if err != nil {
-		return nil, err
+// GetEventsByStreamWithPagination gets events from a specific stream with pagination
+func (db *DB) GetEventsByStreamWithPagination(streamID string, offset, limit int) ([]models.Event, int64, error) {
+	var events []models.Event
+	var total int64
+	
+	query := db.DB.Model(&models.Event{}).Where("stream_id = ?", streamID)
+	
+	// Get total count
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
-	return &execution, nil
+	
+	// Get paginated results ordered by sequence
+	if err := query.Order("sequence_number ASC").Offset(offset).Limit(limit).Find(&events).Error; err != nil {
+		return nil, 0, err
+	}
+	
+	return events, total, nil
 }
 
-// GetEventsByTypeWithPagination demonstrates pagination and filtering
+// GetEventsByTypeWithPagination demonstrates pagination and filtering by type
 func (db *DB) GetEventsByTypeWithPagination(eventType string, offset, limit int) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
@@ -119,35 +130,49 @@ func (db *DB) GetEventsByTypeWithPagination(eventType string, offset, limit int)
 	return events, total, nil
 }
 
-// CreateEventWithTransaction demonstrates transaction usage
-func (db *DB) CreateEventWithTransaction(event *models.Event, executionUpdate *models.WorkflowExecution) error {
+// CreateEventWithSequence creates an event with proper sequence number
+func (db *DB) CreateEventWithSequence(event *models.Event) error {
 	return db.DB.Transaction(func(tx *gorm.DB) error {
-		// Create event
-		if err := tx.Create(event).Error; err != nil {
+		// Get next sequence number for this stream
+		var maxSeq int64
+		err := tx.Model(&models.Event{}).
+			Where("stream_id = ?", event.StreamID).
+			Select("COALESCE(MAX(sequence_number), 0)").
+			Scan(&maxSeq).Error
+		if err != nil {
 			return err
 		}
 		
-		// Update workflow execution if provided
-		if executionUpdate != nil {
-			if err := tx.Save(executionUpdate).Error; err != nil {
-				return err
-			}
-		}
+		event.SequenceNumber = maxSeq + 1
 		
-		return nil
+		// Create event
+		return tx.Create(event).Error
 	})
 }
 
-// GetExecutionStatsByStatus demonstrates aggregation queries
-func (db *DB) GetExecutionStatsByStatus() (map[string]int64, error) {
+// GetWebhookDeliveriesWithRelations demonstrates complex relationships
+func (db *DB) GetWebhookDeliveriesWithRelations(webhookID string, limit int) ([]models.WebhookDelivery, error) {
+	var deliveries []models.WebhookDelivery
+	
+	err := db.DB.Preload("Webhook").Preload("Event").
+		Where("webhook_id = ?", webhookID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&deliveries).Error
+	
+	return deliveries, err
+}
+
+// GetEventStatsByType demonstrates aggregation queries for events
+func (db *DB) GetEventStatsByType() (map[string]int64, error) {
 	var results []struct {
-		Status string
-		Count  int64
+		Type  string
+		Count int64
 	}
 	
-	err := db.DB.Model(&models.WorkflowExecution{}).
-		Select("status, count(*) as count").
-		Group("status").
+	err := db.DB.Model(&models.Event{}).
+		Select("type, count(*) as count").
+		Group("type").
 		Scan(&results).Error
 	
 	if err != nil {
@@ -156,7 +181,7 @@ func (db *DB) GetExecutionStatsByStatus() (map[string]int64, error) {
 	
 	stats := make(map[string]int64)
 	for _, result := range results {
-		stats[result.Status] = result.Count
+		stats[result.Type] = result.Count
 	}
 	
 	return stats, nil

@@ -1,6 +1,6 @@
 // @title Go API Template
 // @version 1.0
-// @description A modern Go API service template with database support, caching, and event management
+// @description A modern Go API service template with database support, caching, event streaming, and webhook delivery
 // @contact.name API Support
 // @contact.email support@example.com
 // @license.name MIT
@@ -55,16 +55,22 @@ func main() {
 	}
 
 	eventStore := events.NewDBEventStore(db)
-	eventManager := events.NewManager(eventStore)
-	workflowManager := events.NewWorkflowManager(eventManager, eventStore)
+	eventManager := events.NewManager(eventStore, db)
 
 	router := gin.New()
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg.CORS))
+	
+	if cfg.RateLimit.Enabled {
+		router.Use(middleware.RateLimit(cfg.RateLimit.MaxRequests, time.Duration(cfg.RateLimit.WindowMinutes)*time.Minute))
+	}
 
-	handler := handlers.New(db, cacheClient, eventManager, workflowManager)
+	handler := handlers.New(db, cacheClient, eventManager)
 	handler.RegisterRoutes(router)
+
+	// Start webhook retry scheduler
+	go startWebhookRetryScheduler(eventManager)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
@@ -95,4 +101,15 @@ func main() {
 	}
 
 	log.Println("Server exited")
+}
+
+func startWebhookRetryScheduler(eventManager *events.Manager) {
+	ticker := time.NewTicker(1 * time.Minute) // Check for retries every minute
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := eventManager.GetWebhookDeliveryService().RetryFailedDeliveries(context.Background()); err != nil {
+			log.Printf("Error retrying webhook deliveries: %v", err)
+		}
+	}
 }
