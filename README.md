@@ -362,5 +362,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For issues and questions:
 - Create an issue in the repository
-- Check the documentation at `/docs/` endpoint
+- Check the documentation in `*.md` files
 - Review the configuration examples in `configs/`
